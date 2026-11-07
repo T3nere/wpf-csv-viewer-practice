@@ -16,25 +16,19 @@ namespace CsvViewer
     /// </summary>
     public partial class MainWindow : Window
     {
-        private int _count;
         private bool _loaded;
 
         public MainWindow()
         {
             InitializeComponent();
-            _count = 0;
-        }
-
-        private void Button_Click(object sender, RoutedEventArgs e)
-        {
-            _count++;
-            StatusText.Text = $"{_count}回押されました";
+            _loaded = false;
         }
 
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
             int rows = DataGrid.Items.Count;
-            MessageBox.Show($"{rows}行を取り込みました。", "OK");
+            MessageBox.Show($"{rows}行を取り込みました。", "読み込み成功",
+                MessageBoxButton.OK, MessageBoxImage.Information);
             Close();
         }
 
@@ -44,7 +38,10 @@ namespace CsvViewer
             {
                 MessageBoxResult r = MessageBox.Show("読み込んだデータを破棄して閉じますか？", "確認",
                     MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (r != MessageBoxResult.Yes) return;
+                if (r != MessageBoxResult.Yes)
+                {
+                    return;
+                }
             }
             Close();
         }
@@ -61,8 +58,8 @@ namespace CsvViewer
             List<CoordinateData> data;
             try
             {
-                raw = ReadCsv(dlg.FileName);
-                data = ConvertAll(raw);
+                raw = TryReadCsv(dlg.FileName);
+                data = TryConvertAll(raw);
             }
             catch (FormatException ex)
             {
@@ -75,9 +72,15 @@ namespace CsvViewer
                                 MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
-            catch(IOException ex)
+            catch (IOException ex)
             {
                 MessageBox.Show(ex.Message, "読み込みエラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            catch(OverflowException ex)
+            {
+                MessageBox.Show("絶対値が大きすぎる数値が含まれています。", "読み込みエラー",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
@@ -90,7 +93,7 @@ namespace CsvViewer
             OkButton.IsEnabled = _loaded;
         }
 
-        private List<string[]> ReadCsv(string path)
+        private List<string[]> TryReadCsv(string path)
         {
             var rows = new List<string[]>();
             using (var parser = new TextFieldParser(path, Encoding.GetEncoding(932)))
@@ -113,28 +116,18 @@ namespace CsvViewer
             return rows;
         }
 
-        private List<CoordinateData> ConvertAll(List<string[]> rows)
+        private List<CoordinateData> TryConvertAll(List<string[]> rows)
         {
             if (rows.Count == 0)
             {
-                throw new FormatException("データがありません");
+                throw new FormatException("データがありません。");
             }
 
             var list = new List<CoordinateData>();
             for (int r = 0; r < rows.Count; r++)
             {
                 string[] fields = rows[r];
-                if (fields.Length < 6)
-                {
-                    throw new FormatException($"{r + 1}行目（空行を除く）：列数が6未満です。");
-                }
-                for (int c = 0; c < 6; c++)
-                {
-                    if (!IsNumber(fields[c]))
-                    {
-                        throw new FormatException($"{r + 1}行目{c + 1}列目（空行を除く）：半角数字以外です。");
-                    }
-                }
+                ValidateRow(fields);
 
                 list.Add(new CoordinateData
                 {
@@ -147,6 +140,21 @@ namespace CsvViewer
                 });
             }
             return list;
+        }
+
+        private void ValidateRow(string[] fields)
+        {
+            if (fields.Length < 6)
+            {
+                throw new FormatException($"列数が6未満の行があります。");
+            }
+            for (int c = 0; c < 6; c++)
+            {
+                if (!IsNumber(fields[c]))
+                {
+                    throw new FormatException($"半角数字以外のデータがあります。");
+                }
+            }
         }
 
         private bool IsNumber(string value)
