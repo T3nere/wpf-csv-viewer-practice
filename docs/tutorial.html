@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WPF練習教材 v5：CSVビューアを作る（.NET Framework / TextFieldParser）</title>
+<style>
+:root{--bg:#f6f8f9;--ink:#1d2b33;--sub:#5b6b74;--line:#d5dde2;--acc:#0b6e75;--code:#10242b;--codefg:#dbeaed;--warn:#fff4d6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.85 "Yu Gothic UI","Meiryo UI",sans-serif}
+header,main{max-width:860px;margin:0 auto;padding:0 20px}
+header{padding-top:40px}
+h1{font-size:1.8rem;margin:0 0 .4em;line-height:1.4}
+h2{font-size:1.3rem;margin:0 0 .6em;padding-left:.7em;border-left:5px solid var(--acc)}
+h3{font-size:1rem;margin:1.4em 0 .3em;color:var(--acc)}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:8px 0;margin-top:20px;z-index:5;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.9rem}
+nav a{color:var(--acc);text-decoration:none}
+nav a:hover,nav a:focus-visible{text-decoration:underline}
+section{padding:36px 0;border-bottom:1px solid var(--line)}
+pre{background:var(--code);color:var(--codefg);padding:14px 16px;border-radius:6px;overflow-x:auto;font:14px/1.6 Consolas,"BIZ UDGothic",monospace;margin:.8em 0}
+code{font-family:Consolas,monospace;background:#e4ecef;padding:1px 5px;border-radius:3px;font-size:.92em}
+pre code{background:none;padding:0}
+.ex{background:#fff;border:1px solid var(--line);border-left:5px solid var(--acc);padding:6px 18px 14px;margin:1.4em 0;border-radius:4px}
+.note{background:var(--warn);padding:10px 16px;border-radius:4px;margin:1em 0;font-size:.95rem}
+summary{cursor:pointer;color:var(--acc);font-weight:bold;margin-top:.6em}
+summary:focus-visible{outline:2px solid var(--acc)}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+td,th{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+th{background:#e9eff2}
+</style>
+</head>
+<body>
+<header>
+<h1>WPF練習教材 v5：CSVビューアを作る</h1>
+<p>.NET Framework上のWPFで、<code>TextFieldParser</code>を使ってCSVを読み込み、表示するアプリを7ステップで作ります。各ステップは「知識 → 演習 → 解答例」の順です。解答は先に見ず、まず自分で書いてみてください。</p>
+
+<h2>最終的に作るもの</h2>
+<ul>
+<li>CSVを読み込み、先頭6列だけをDataGridに表示する（7列目以降は捨てる）</li>
+<li>数値（半角の整数・小数・負数）以外が1つでもあればエラーメッセージを出し、読み込まない</li>
+<li>チェックボックスがオンの間、DataGridをグレーアウトする</li>
+<li>OK / Cancelボタンを置く。CSVを1度も読み込めていない間はOKを押せない</li>
+</ul>
+
+<h2>前提</h2>
+<table>
+<tr><th>項目</th><th>決め</th></tr>
+<tr><td>環境</td><td>Visual Studio 2022、<strong>.NET Framework 4.8</strong>の「WPFアプリ(.NET Framework)」。プロジェクト名は <code>CsvViewer</code>。<br>確認方法：プロジェクトのプロパティ →「アプリケーション」→「ターゲットフレームワーク」</td></tr>
+<tr><td>C#のバージョン</td><td>.NET Frameworkの既定は<strong>C# 7.3</strong>。<code>using var</code>、ファイルスコープ名前空間、<code>string?</code>、暗黙のusingは使えないので、コードは使わない書き方にしてある</td></tr>
+<tr><td>CSV読み込み</td><td><code>TextFieldParser</code>（カンマ区切り、引用符あり）、文字コードはShift_JIS(932)</td></tr>
+<tr><td>セルの前後の空白</td><td>取り除いて扱う（<code>" 34"</code> → <code>"34"</code>）</td></tr>
+<tr><td>有効な値</td><td>トリム後に <code>-?[0-9]+(\.[0-9]+)?</code> の形（半角数字、先頭の <code>-</code> が1つまで、小数点 <code>.</code> が1つまで）。<strong>空欄・空白のみ</strong>・全角数字・<code>+5</code>・<code>.5</code>・<code>5.</code>・<code>1e3</code> はエラー。ファイル内の小数点は常に <code>.</code>（書式は固定）。※元の要件「半角数字のみ」を、負数と小数を許す形に拡張している</td></tr>
+<tr><td>空行</td><td><code>TextFieldParser</code>が自動で読み飛ばす。エラー表示の行番号は「空行を除いた行番号」</td></tr>
+<tr><td>7列目以降</td><td>値の検証はしない。ただし引用符が壊れた行は、パース自体が失敗してエラーになる</td></tr>
+<tr><td>行クラスの型</td><td>各列を <code>double</code> に変換して <code>CoordinateData</code>（C1〜C6）に保持する。型の選び方はステップ3</td></tr>
+<tr><td>6列未満の行</td><td>エラー</td></tr>
+<tr><td>読み込み失敗時</td><td>画面も「読み込み済み」状態も変えない</td></tr>
+</table>
+
+<nav aria-label="ステップ">
+<a href="#s1">1 環境とXAML</a><a href="#s2">2 CSV読み込み</a><a href="#s3">3 DataGrid</a><a href="#s4">4 入力検証</a><a href="#s5">5 グレーアウト</a><a href="#s6">6 OK/Cancel</a><a href="#s7">7 総合</a><a href="#s8">参考 MVVM</a>
+</nav>
+</header>
+
+<main>
+
+<section id="s1">
+<h2>ステップ1：環境設定とXAMLの基本</h2>
+<h3>知識</h3>
+<p>WPFの画面は、見た目を書く <code>MainWindow.xaml</code> と、動きを書く <code>MainWindow.xaml.cs</code>（コードビハインド）がペアです。XAMLの要素に <code>x:Name</code> を付けるとC#側から名前で操作でき、ボタンの <code>Click="○○"</code> に書いた名前のメソッドがクリック時に呼ばれます。配置は <code>Grid</code>（行と列）、<code>StackPanel</code>（縦か横に積む）が基本です。</p>
+<div class="note"><strong>.NET Frameworkで必須の準備：</strong><code>TextFieldParser</code>は <code>Microsoft.VisualBasic</code> アセンブリにあります。ソリューションエクスプローラーで「参照」を右クリック →「参照の追加」→「アセンブリ」→「フレームワーク」から <code>Microsoft.VisualBasic</code> にチェックを入れてください。C#から使っても問題ありません。</div>
+<pre><code>&lt;Grid Margin="10"&gt;
+    &lt;Grid.RowDefinitions&gt;
+        &lt;RowDefinition Height="Auto" /&gt;
+        &lt;RowDefinition Height="*" /&gt;
+        &lt;RowDefinition Height="Auto" /&gt;
+    &lt;/Grid.RowDefinitions&gt;
+    &lt;TextBlock x:Name="StatusText" Grid.Row="0" Text="未実行" /&gt;
+    &lt;Button Grid.Row="2" Content="押してみる" Click="Button_Click"
+            Width="120" HorizontalAlignment="Right" /&gt;
+&lt;/Grid&gt;</code></pre>
+<pre><code>private void Button_Click(object sender, RoutedEventArgs e)
+{
+    StatusText.Text = "押されました";
+}</code></pre>
+<div class="ex">
+<h3>演習1</h3>
+<ol>
+<li>参照に <code>Microsoft.VisualBasic</code> を追加し、<code>using Microsoft.VisualBasic.FileIO;</code> を書いてエラーが出ないことを確認する。</li>
+<li>ボタンを押すたびに「○回押されました」と表示する。（ヒント：フィールド変数 <code>int _count</code>）</li>
+</ol>
+<details><summary>解答例（2）</summary>
+<pre><code>private int _count = 0;
+private void Button_Click(object sender, RoutedEventArgs e)
+{
+    _count++;
+    StatusText.Text = $"{_count}回押されました";
+}</code></pre>
+</details>
+</div>
+</section>
+
+<section id="s2">
+<h2>ステップ2：TextFieldParserでCSVを読む</h2>
+<h3>知識</h3>
+<ul>
+<li><code>OpenFileDialog.ShowDialog()</code> は <code>bool?</code> を返し、「開く」を押したときだけ <code>true</code> です。</li>
+<li><code>TextFieldParser</code> は <code>IDisposable</code> なので <code>using</code> ブロックで囲みます（C# 7.3では <code>using (…) { }</code> の形）。</li>
+<li><code>ReadFields()</code> は1行を分割済みの <code>string[]</code> で返します。<code>EndOfData</code> が <code>true</code> になるまで繰り返します。</li>
+<li>.NET Frameworkでは <code>Encoding.GetEncoding(932)</code>（Shift_JIS）が標準で使えるため、<code>Encoding.RegisterProvider</code> は不要です。</li>
+</ul>
+<table>
+<tr><th>設定</th><th>意味</th><th>この教材での値</th></tr>
+<tr><td><code>TextFieldType</code></td><td>区切り式か固定幅か</td><td><code>FieldType.Delimited</code></td></tr>
+<tr><td><code>SetDelimiters(",")</code></td><td>区切り文字（<strong>必須</strong>。未設定だと例外）</td><td><code>","</code></td></tr>
+<tr><td><code>TrimWhiteSpace</code></td><td>各セルの前後の空白を除くか（既定true）</td><td><code>true</code>（<code>" 34"</code> → <code>"34"</code>）</td></tr>
+<tr><td><code>HasFieldsEnclosedInQuotes</code></td><td><code>"1,000"</code> のような引用符を解釈するか（既定true）</td><td><code>true</code></td></tr>
+</table>
+<pre><code>private static List&lt;string[]&gt; ReadCsv(string path)
+{
+    var rows = new List&lt;string[]&gt;();
+    using (var parser = new TextFieldParser(path, Encoding.GetEncoding(932)))
+    {
+        parser.TextFieldType = FieldType.Delimited;
+        parser.SetDelimiters(",");
+        parser.TrimWhiteSpace = true;
+        parser.HasFieldsEnclosedInQuotes = true;
+
+        while (!parser.EndOfData)
+        {
+            string[] f = parser.ReadFields();
+            if (f != null) rows.Add(f);
+        }
+    }
+    return rows;
+}</code></pre>
+<div class="note">行番号のために <code>parser.LineNumber</code> を使いたくなりますが、最終行を読み終えた後は <code>-1</code> を返すなど扱いにくいので、この教材では読み込んだ行を自分で数えます。ただし引用符が壊れた行の <code>MalformedLineException.LineNumber</code> は、ステップ7のとおりそのまま使えます。</div>
+<div class="ex">
+<h3>演習2</h3>
+<ol>
+<li>「読み込み」ボタンを作り、<code>ReadCsv</code> の結果から「ファイル名・行数・1行目の列数」を <code>StatusText</code> に表示する。</li>
+<li>テスト用に <code>ok.csv</code>（6列以上の数字が8行）を作る。次のCSVでも試し、<strong>行数や値がどうなるか予想してから</strong>実行する。<br>
+(a) 途中に空行を入れたファイル　(b) <code>1, 34,3,4,5,6</code>（2列目の前に空白）　(c) <code>1,"2,000",3,4,5,6</code>　(d) 全角スペースだけのセルを含む行（トリムされるかどうか）</li>
+</ol>
+<details><summary>解答例・確認ポイント</summary>
+<pre><code>var rows = ReadCsv(dlg.FileName);
+int cols = rows.Count &gt; 0 ? rows[0].Length : 0;
+StatusText.Text = $"{Path.GetFileName(dlg.FileName)} / {rows.Count}行 / 1行目は{cols}列";</code></pre>
+<p>(a) 空行は数えられない。(b) 2列目が <code>"34"</code> になる。(c) <code>2,000</code> が1つのセルになり、列数は6。(d) は環境で挙動を実測して確認してください。全角スペースがトリムされるかどうかは、仕様を前提にせず自分の環境で確かめる習慣が大事です。</p>
+</details>
+</div>
+</section>
+
+<section id="s3">
+<h2>ステップ3：DataGridに表示する（6列固定）</h2>
+<h3>知識</h3>
+<ul>
+<li><code>DataGrid</code> の <code>ItemsSource</code> に「行を表すオブジェクトのコレクション」を渡すと、1要素が1行として表示されます。<strong>ItemsSource に代入しない限り、何も表示されません。</strong>読み込んだデータを変数に入れただけでは画面は変わりません。</li>
+<li>列の作り方は2通りあります。<code>AutoGenerateColumns="True"</code>（既定）はプロパティ名から自動生成し、<code>False</code> にして <code>DataGrid.Columns</code> に <code>DataGridTextColumn</code> を書けば、ヘッダ名・幅・並び順を自分で決められます。<strong>列が固定ならこちら</strong>です。</li>
+<li><code>Binding="{Binding C1}"</code> は「行オブジェクトの <code>C1</code> プロパティを表示する」という意味です。バインディングできるのは<strong>プロパティ</strong>だけで、フィールド（<code>public double C1;</code>）は表示されません。<code>{ get; set; }</code> を付けます。</li>
+<li><code>x:Name</code> は型名（<code>DataGrid</code>）と別の名前にします。同じ名前でも動きますが、<code>DataGrid.ItemsSource</code> が型のメンバーかインスタンスのメンバーか、読む人が迷います。ここでは <code>CsvGrid</code> とします。</li>
+<li>7列目以降は、行クラスに入れないことで捨てます。</li>
+</ul>
+<h3>行クラスのプロパティの型</h3>
+<table>
+<tr><th>型</th><th>正確に扱える整数の範囲</th><th>向いている場合</th></tr>
+<tr><td><code>string</code></td><td>無制限</td><td>表示だけでよい。先頭ゼロを残したい</td></tr>
+<tr><td><code>int</code> / <code>long</code></td><td>約21億 / 約9.2×10<sup>18</sup></td><td>整数として並べ替え・計算したい</td></tr>
+<tr><td><code>float</code></td><td>約1,677万（2<sup>24</sup>）</td><td>この用途には不向き（精度が足りず、表示も <code>1.234568E+09</code> のようになる）</td></tr>
+<tr><td><code>double</code></td><td>約9×10<sup>15</sup>（2<sup>53</sup>）</td><td>X・Y・Zのような座標値。小数を扱う可能性がある</td></tr>
+</table>
+<p>この教材では座標値を想定して <code>double</code> を採用します。入力は整数のみですが、15桁を超える数字は正確に保持できない点は覚えておいてください。</p>
+<pre><code>&lt;DataGrid x:Name="CsvGrid" Grid.Row="1" IsReadOnly="True" AutoGenerateColumns="False"&gt;
+    &lt;DataGrid.Columns&gt;
+        &lt;DataGridTextColumn Header="X1" Binding="{Binding C1}" /&gt;
+        &lt;DataGridTextColumn Header="Y1" Binding="{Binding C2}" /&gt;
+        &lt;DataGridTextColumn Header="Z1" Binding="{Binding C3}" /&gt;
+        &lt;DataGridTextColumn Header="X2" Binding="{Binding C4}" /&gt;
+        &lt;DataGridTextColumn Header="Y2" Binding="{Binding C5}" /&gt;
+        &lt;DataGridTextColumn Header="Z2" Binding="{Binding C6}" /&gt;
+    &lt;/DataGrid.Columns&gt;
+&lt;/DataGrid&gt;</code></pre>
+<pre><code>internal class CoordinateData
+{
+    public double C1 { get; set; }
+    public double C2 { get; set; }
+    public double C3 { get; set; }
+    public double C4 { get; set; }
+    public double C5 { get; set; }
+    public double C6 { get; set; }
+}
+
+// using System.Globalization; が必要
+private static List&lt;CoordinateData&gt; BuildRows(List&lt;string[]&gt; rows)
+{
+    var list = new List&lt;CoordinateData&gt;();
+    foreach (string[] f in rows)
+    {
+        list.Add(new CoordinateData
+        {
+            C1 = double.Parse(f[0], CultureInfo.InvariantCulture),
+            C2 = double.Parse(f[1], CultureInfo.InvariantCulture),
+            C3 = double.Parse(f[2], CultureInfo.InvariantCulture),
+            C4 = double.Parse(f[3], CultureInfo.InvariantCulture),
+            C5 = double.Parse(f[4], CultureInfo.InvariantCulture),
+            C6 = double.Parse(f[5], CultureInfo.InvariantCulture)   // f[6]以降は使わない = 捨てる
+        });
+    }
+    return list;
+}
+// 呼び出し側
+CsvGrid.ItemsSource = BuildRows(rows);</code></pre>
+<p>ここでは検証をしていないので、数字以外のセルや6列未満の行があると例外で落ちます。ステップ4で検証と変換を <code>ConvertAll</code> にまとめ、この <code>BuildRows</code> は不要になります。</p>
+<div class="ex">
+<h3>演習3</h3>
+<ol>
+<li><code>ok.csv</code> を読み込み、6列だけ表示されることを確認する。</li>
+<li><code>CsvGrid.ItemsSource = …</code> の行をコメントアウトして実行し、表示されないことを確認する。確認したら戻す。</li>
+<li><code>{Binding C1}</code> を <code>{Binding C9}</code> に変えて実行する。画面は空欄になるが、Visual Studioの「出力」ウィンドウに <code>BindingExpression path error</code> が出ることを確認する。表示されないときの調べ方として覚えておく。</li>
+<li>ヘッダ名を変更し、幅を <code>Width="*"</code> で均等に広げる。さらに、数値列を右寄せにする。</li>
+<li><code>C1</code> の型を <code>double</code> から <code>string</code> に変え、列ヘッダのクリックでの並べ替えがどう変わるか比べる。</li>
+</ol>
+<details><summary>解答例（4）</summary>
+<pre><code>&lt;DataGridTextColumn Header="X1" Binding="{Binding C1}" Width="*"&gt;
+    &lt;DataGridTextColumn.ElementStyle&gt;
+        &lt;Style TargetType="TextBlock"&gt;
+            &lt;Setter Property="HorizontalAlignment" Value="Right" /&gt;
+        &lt;/Style&gt;
+    &lt;/DataGridTextColumn.ElementStyle&gt;
+&lt;/DataGridTextColumn&gt;</code></pre>
+</details>
+</div>
+
+<h3>参考：列数が実行時に決まる場合</h3>
+<p>CSVごとに列数が違うときは、列をXAMLに書けないため、<code>System.Data.DataTable</code> を作って <code>DefaultView</code> を渡す方法が手軽です。<code>AutoGenerateColumns="True"</code> のままで、<code>DataTable</code> の列がそのままDataGridの列になります（<code>System.Data</code> の参照はWPFのテンプレートに最初から入っています）。今回の教材では使いませんが、総合演習2の出発点になります。</p>
+<pre><code>&lt;DataGrid x:Name="CsvGrid" Grid.Row="1" IsReadOnly="True" AutoGenerateColumns="True" /&gt;</code></pre>
+<pre><code>using System.Data;
+
+private static DataTable BuildTable(List&lt;string[]&gt; rows)
+{
+    int colCount = rows[0].Length;   // 1行目の列数に合わせる（rowsが空でないことは検証済みとする）
+    var table = new DataTable();
+    for (int i = 1; i &lt;= colCount; i++) table.Columns.Add("列" + i);
+
+    foreach (string[] f in rows)
+    {
+        DataRow row = table.NewRow();
+        for (int i = 0; i &lt; colCount &amp;&amp; i &lt; f.Length; i++) row[i] = f[i];
+        table.Rows.Add(row);
+    }
+    return table;
+}
+// 呼び出し側
+CsvGrid.ItemsSource = BuildTable(rows).DefaultView;</code></pre>
+<p>この方式のときは、行クラス <code>CoordinateData</code> と固定の列定義は不要です。また、<code>OkButton_Click</code> の行数取得は、ステップ7の <code>CsvGrid.Items.Count</code> のままで動きます。</p>
+</section>
+
+<section id="s4">
+<h2>ステップ4：入力検証と変換（ConvertAll）</h2>
+<h3>知識</h3>
+<ul>
+<li>「読み込まない」を満たすため、処理を2段階に分けます。<code>ReadCsv</code>（分割だけ）→ <code>ConvertAll</code>（全行を検証しながら変換）。不正があれば <code>FormatException</code> を <code>throw</code> します。</li>
+<li><code>throw</code> すると、その場から最も近い <code>try</code> の <code>catch</code> まで処理が飛びます。<code>catch</code> の中で <code>return</code> すれば、<code>ItemsSource</code> への代入は実行されません。これが「表に触れない」仕組みです。</li>
+<li>検証は<strong>正規表現</strong>で行います。1文字ずつ判定するコードが「どう調べるか」を書くのに対し、正規表現は「文字列全体がどんな形か」を宣言します。</li>
+<li>前後の空白は <code>TextFieldParser</code> が除去済みです。空白のみのセルは空文字になり、パターンに当てはまらないのでエラーになります（空欄も同じ）。</li>
+<li>変換の <code>double.Parse</code> は、検証を通った後に <code>CultureInfo.InvariantCulture</code> を付けて呼びます。小数点を常に <code>.</code> として読む保証になります。</li>
+</ul>
+<h3>パターン <code>^-?[0-9]+(\.[0-9]+)?\z</code> の読み方</h3>
+<table>
+<tr><th>部品</th><th>意味</th></tr>
+<tr><td><code>^</code></td><td>文字列の先頭</td></tr>
+<tr><td><code>-?</code></td><td><code>-</code> が0個か1個（<code>?</code> は「省略可能」）</td></tr>
+<tr><td><code>[0-9]+</code></td><td>0〜9のどれか1文字を1回以上（<code>[ ]</code> は「この中のどれか1文字」、<code>+</code> は「1回以上」）</td></tr>
+<tr><td><code>(\.[0-9]+)?</code></td><td>「小数点 ＋ 数字1個以上」の塊が0回か1回。<code>\.</code> は小数点そのもの</td></tr>
+<tr><td><code>\z</code></td><td>文字列の末尾</td></tr>
+</table>
+<div class="note"><strong>落とし穴：</strong>(1) <code>^</code> と <code>\z</code> を外すと部分一致になり、<code>abc12</code> が通ります。(2) <code>.</code> は正規表現では「任意の1文字」なので、小数点は <code>\.</code> と書きます。(3) <code>\d</code> は全角数字にもマッチするので <code>[0-9]</code> を使い、末尾は <code>$</code>（末尾の改行の手前にもマッチする）ではなく <code>\z</code> を使います。C#では <code>@"..."</code>（逐語的文字列）にしないと、バックスラッシュがC#のエスケープとして解釈されます。</div>
+<pre><code>private const int ColCount = 6;
+private static readonly Regex NumberPattern = new Regex(@"^-?[0-9]+(\.[0-9]+)?\z");
+
+private static bool IsNumber(string s)
+{
+    return NumberPattern.IsMatch(s);
+}
+
+private static List&lt;CoordinateData&gt; ConvertAll(List&lt;string[]&gt; rows)
+{
+    if (rows.Count == 0)
+        throw new FormatException("データがありません。");
+
+    var list = new List&lt;CoordinateData&gt;();
+    for (int r = 0; r &lt; rows.Count; r++)
+    {
+        string[] f = rows[r];
+        if (f.Length &lt; ColCount)
+            throw new FormatException($"{r + 1}行目（空行を除く）：列数が{ColCount}未満です。");
+
+        for (int c = 0; c &lt; ColCount; c++)
+            if (!IsNumber(f[c]))
+                throw new FormatException($"{r + 1}行目{c + 1}列目（空行を除く）：数値として不正です。");
+
+        list.Add(new CoordinateData { /* ステップ3のとおり C1〜C6 に Parse して代入 */ });
+    }
+    return list;
+}</code></pre><pre><code>// 呼び出し側（using System; が必要）
+List&lt;string[]&gt; raw;
+List&lt;CoordinateData&gt; data;
+try
+{
+    raw = ReadCsv(dlg.FileName);
+    data = ConvertAll(raw);
+}
+catch (FormatException ex)
+{
+    MessageBox.Show(ex.Message, "読み込みエラー", MessageBoxButton.OK, MessageBoxImage.Error);
+    return;   // ここで抜けるので、以降の ItemsSource 代入は行われない
+}
+CsvGrid.ItemsSource = data;</code></pre>
+<div class="note">元のCSVの列数（7列目以降を含む）を表示したいときは <code>raw[0].Length</code> を使います。<code>data</code> は6列に切り詰めた後の形なので、元の列数の情報は残っていません。</div>
+<div class="ex">
+<h3>演習4</h3>
+<ol>
+<li>次のセルを含むCSVを1つずつ作って読み込み、期待どおりか確認する。<br>
+OKになる：<code>12</code>、<code>␣34</code>（先頭に空白）、<code>0</code>、<code>007</code>、<code>-5</code>、<code>1.5</code>、<code>-0.5</code><br>
+エラーになる：<code>12a</code>、<code>１２</code>（全角）、<code>-</code>、<code>--5</code>、<code>1.2.3</code>、<code>.5</code>、<code>5.</code>、<code>+5</code>、<code>1e3</code>、空欄、空白のみ</li>
+<li>7列目に <code>abc</code> が入った行は読み込めることを確認する。</li>
+<li>CSVを作らずにパターンだけを確かめる方法として、次のコードを一度呼んで「出力」ウィンドウを見る。期待は、先頭5つが <code>True</code>、残りが <code>False</code>。</li>
+</ol>
+<pre><code>// using System.Diagnostics; が必要。「出力」ウィンドウに結果が出る
+foreach (string s in new[] { "-5", "1.5", "-0.5", "0", "007",
+                             "-", "--5", "1.2.3", ".5", "5.", "+5", "1e3", "１２", "" })
+    Debug.WriteLine($"{s,-8} {IsNumber(s)}");</code></pre>
+<ol start="4">
+<li>パターンを <code>^[-+]?[0-9]+(\.[0-9]+)?\z</code> に変えると何が変わるか予想してから試す。<code>.5</code> も許したい場合のパターンも自分で考える。</li>
+<li>400桁の数字を入れるとどうなるか確認する。<code>double.Parse</code> が例外を投げた場合に備えて、桁数の上限（<code>[0-9]{1,15}</code> など）を加えるか、<code>OverflowException</code> を <code>catch</code> するかを決める。</li>
+<li>発展：最初のエラーで止まらず、<strong>最大5件</strong>のエラーをまとめて表示する。（ヒント：例外を投げる代わりに <code>List&lt;string&gt;</code> に追加し、最後に <code>string.Join("\n", errors)</code> で結合する）</li>
+</ol>
+</div>
+</section>
+
+<section id="s5">
+<h2>ステップ5：チェックボックスでグレーアウト</h2>
+<h3>知識</h3>
+<p><code>IsEnabled = false</code> にするとコントロール（と子要素）が操作不能になり、灰色で表示されます。<code>CheckBox</code> のオン／オフは <code>IsChecked</code>（<code>bool?</code> 型）で取得できます。実現方法は2つあり、この教材の完成形は<strong>方法B</strong>です。</p>
+<h3>方法A：イベント（コードビハインド）</h3>
+<pre><code>&lt;CheckBox x:Name="GrayCheck" Content="表をグレーアウト"
+          Checked="GrayCheck_Changed" Unchecked="GrayCheck_Changed" /&gt;</code></pre><pre><code>private void GrayCheck_Changed(object sender, RoutedEventArgs e)
+{
+    CsvGrid.IsEnabled = GrayCheck.IsChecked != true;
+}</code></pre>
+<h3>方法B：DataTrigger（XAMLだけ）</h3>
+<p><code>{Binding IsChecked, ElementName=GrayCheck}</code> は「別のコントロールのプロパティを参照する」データバインディングです。<code>DataTrigger</code> は、その値が <code>True</code> の間だけ <code>Setter</code> を適用し、外れたら自動で元に戻します。「戻す処理」を書かなくてよいのが利点で、MVVMにつながる考え方です。</p>
+<pre><code>&lt;DataGrid x:Name="CsvGrid" Grid.Row="2" IsReadOnly="True" AutoGenerateColumns="False"&gt;
+    &lt;DataGrid.Columns&gt; ... &lt;/DataGrid.Columns&gt;
+    &lt;DataGrid.Style&gt;
+        &lt;Style TargetType="DataGrid"&gt;
+            &lt;Style.Triggers&gt;
+                &lt;DataTrigger Binding="{Binding IsChecked, ElementName=GrayCheck}" Value="True"&gt;
+                    &lt;Setter Property="IsEnabled" Value="False" /&gt;
+                &lt;/DataTrigger&gt;
+            &lt;/Style.Triggers&gt;
+        &lt;/Style&gt;
+    &lt;/DataGrid.Style&gt;
+&lt;/DataGrid&gt;
+&lt;CheckBox x:Name="GrayCheck" Content="表をグレーアウト" Grid.Row="3" /&gt;</code></pre>
+<div class="ex">
+<h3>演習5</h3>
+<ol>
+<li>方法Aで、チェックのオン／オフで表の状態が切り替わることを確認する。</li>
+<li>グレーアウト中にCSVを読み込むとどうなるか確認する。（今回は更新を許可する）</li>
+<li>方法Bに書き換え、方法Aの <code>Checked</code> / <code>Unchecked</code> 属性とメソッドを削除する。</li>
+<li>方法Aと方法Bを<strong>両方残す</strong>とどうなるか、予想してから試す。（ヒント：依存関係プロパティの値は、コードで直接代入した値と、スタイルのトリガーで設定した値のどちらが優先されるか）</li>
+</ol>
+</div>
+</section>
+
+<section id="s6">
+<h2>ステップ6：OK / Cancelと「読み込み済み」状態</h2>
+<h3>知識</h3>
+<ul>
+<li>「読み込んだか」は、UIから推測せず <code>bool _loaded</code> の<strong>状態変数</strong>で持ちます。</li>
+<li><code>IsDefault="True"</code> はEnterキー、<code>IsCancel="True"</code> はEscキーで押されるボタンになります。ただし、<code>IsCancel</code> が自動でウィンドウを閉じるのは <code>ShowDialog()</code> で開いたダイアログだけです。メインウィンドウでは <code>Close()</code> を自分で呼びます。</li>
+</ul>
+<pre><code>&lt;StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"&gt;
+    &lt;Button x:Name="OkButton" Content="OK" Width="80" Margin="0,0,8,0"
+            IsDefault="True" IsEnabled="False" Click="OkButton_Click" /&gt;
+    &lt;Button Content="Cancel" Width="80" IsCancel="True" Click="CancelButton_Click" /&gt;
+&lt;/StackPanel&gt;</code></pre>
+<div class="ex">
+<h3>演習6</h3>
+<ol>
+<li>起動直後はOKが押せず、読み込みに成功すると押せるようになることを確認する。</li>
+<li><code>ok.csv</code> → <code>ng.csv</code> の順に読み込み、OKが押せたままで表も前のデータのままであることを確認する。</li>
+<li>Escで閉じ、Enterで <code>OkButton</code> が動くことを確認する。</li>
+<li>発展：読み込み済みの状態でCancelを押したら「破棄しますか？」と <code>MessageBoxButton.YesNo</code> で確認する。（解答はステップ7のコードに含まれています）</li>
+</ol>
+</div>
+</section>
+
+<section id="s7">
+<h2>ステップ7：総合（完成形の例）</h2>
+<p>自分のコードと見比べ、違う箇所は「なぜ違うのか」を確認してください。C# 7.3で動く書き方にしています。DataGridの行を <code>Height="*"</code> にしているのは、<code>Auto</code> だと表が行数ぶん縦に伸び、スクロールバーが出ずに下のOK/Cancelがウィンドウの外に押し出されるためです。</p>
+<details open><summary>MainWindow.xaml</summary>
+<pre><code>&lt;Window x:Class="CsvViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CSVビューア" Height="450" Width="800"&gt;
+    &lt;Grid Margin="10"&gt;
+        &lt;Grid.RowDefinitions&gt;
+            &lt;RowDefinition Height="Auto" /&gt;
+            &lt;RowDefinition Height="Auto" /&gt;
+            &lt;RowDefinition Height="*" /&gt;
+            &lt;RowDefinition Height="Auto" /&gt;
+            &lt;RowDefinition Height="Auto" /&gt;
+        &lt;/Grid.RowDefinitions&gt;
+
+        &lt;TextBlock x:Name="StatusText" Text="未読み込み" Grid.Row="0" HorizontalAlignment="Center" /&gt;
+        &lt;Button Content="ファイル読込" Click="LoadButton_Click" Width="80" Grid.Row="1"
+                HorizontalAlignment="Center" Margin="0,4" /&gt;
+
+        &lt;DataGrid x:Name="CsvGrid" Grid.Row="2" IsReadOnly="True" AutoGenerateColumns="False"&gt;
+            &lt;DataGrid.Columns&gt;
+                &lt;DataGridTextColumn Header="X1" Binding="{Binding C1}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="Y1" Binding="{Binding C2}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="Z1" Binding="{Binding C3}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="X2" Binding="{Binding C4}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="Y2" Binding="{Binding C5}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="Z2" Binding="{Binding C6}" Width="*" /&gt;
+            &lt;/DataGrid.Columns&gt;
+            &lt;DataGrid.Style&gt;
+                &lt;Style TargetType="DataGrid"&gt;
+                    &lt;Style.Triggers&gt;
+                        &lt;DataTrigger Binding="{Binding IsChecked, ElementName=GrayCheck}" Value="True"&gt;
+                            &lt;Setter Property="IsEnabled" Value="False" /&gt;
+                        &lt;/DataTrigger&gt;
+                    &lt;/Style.Triggers&gt;
+                &lt;/Style&gt;
+            &lt;/DataGrid.Style&gt;
+        &lt;/DataGrid&gt;
+
+        &lt;CheckBox x:Name="GrayCheck" Content="グリッドをグレーアウト" Grid.Row="3" Margin="0,6" /&gt;
+
+        &lt;StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right"&gt;
+            &lt;Button x:Name="OkButton" Content="OK" Width="80" Margin="0,0,8,0"
+                    IsDefault="True" IsEnabled="False" Click="OkButton_Click" /&gt;
+            &lt;Button x:Name="CancelButton" Content="キャンセル" Width="80" IsCancel="True" Click="CancelButton_Click" /&gt;
+        &lt;/StackPanel&gt;
+    &lt;/Grid&gt;
+&lt;/Window&gt;</code></pre>
+</details>
+<details open><summary>MainWindow.xaml.cs</summary>
+<pre><code>using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Windows;
+using Microsoft.VisualBasic.FileIO;
+using Microsoft.Win32;
+
+namespace CsvViewer
+{
+    internal class CoordinateData
+    {
+        public double C1 { get; set; }
+        public double C2 { get; set; }
+        public double C3 { get; set; }
+        public double C4 { get; set; }
+        public double C5 { get; set; }
+        public double C6 { get; set; }
+    }
+
+    public partial class MainWindow : Window
+    {
+        private const int ColCount = 6;
+        private bool _loaded = false;
+
+        public MainWindow()
+        {
+            InitializeComponent();
+        }
+
+        private void LoadButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new OpenFileDialog { Filter = "CSVファイル|*.csv|テキストファイル|*.txt" };
+            if (dlg.ShowDialog() != true) return;
+
+            List&lt;string[]&gt; raw;
+            List&lt;CoordinateData&gt; data;
+            try
+            {
+                raw = ReadCsv(dlg.FileName);   // 分割だけ
+                data = ConvertAll(raw);        // 検証 + 変換。不正なら例外
+            }
+            catch (FormatException ex)
+            {
+                ShowError(ex.Message);
+                return;
+            }
+            catch (MalformedLineException ex)
+            {
+                ShowError($"{ex.LineNumber}行目：CSVの形式が不正です。");
+                return;
+            }
+            catch (IOException ex)
+            {
+                ShowError(ex.Message);
+                return;
+            }
+
+            CsvGrid.ItemsSource = data;   // これを忘れると表示されない
+            StatusText.Text = $"{Path.GetFileName(dlg.FileName)}（{raw.Count}行 / 1行目は{raw[0].Length}列）";
+            _loaded = true;
+            OkButton.IsEnabled = _loaded;
+        }
+
+        private static List&lt;string[]&gt; ReadCsv(string path)
+        {
+            var rows = new List&lt;string[]&gt;();
+            using (var parser = new TextFieldParser(path, Encoding.GetEncoding(932)))
+            {
+                parser.TextFieldType = FieldType.Delimited;
+                parser.SetDelimiters(",");
+                parser.TrimWhiteSpace = true;
+                parser.HasFieldsEnclosedInQuotes = true;
+
+                while (!parser.EndOfData)
+                {
+                    string[] f = parser.ReadFields();
+                    if (f != null) rows.Add(f);
+                }
+            }
+            return rows;
+        }
+
+        private static List&lt;CoordinateData&gt; ConvertAll(List&lt;string[]&gt; rows)
+        {
+            if (rows.Count == 0)
+                throw new FormatException("データがありません。");
+
+            var list = new List&lt;CoordinateData&gt;();
+            for (int r = 0; r &lt; rows.Count; r++)
+            {
+                string[] f = rows[r];
+                if (f.Length &lt; ColCount)
+                    throw new FormatException($"{r + 1}行目（空行を除く）：列数が{ColCount}未満です。");
+
+                for (int c = 0; c &lt; ColCount; c++)
+                    if (!IsNumber(f[c]))
+                        throw new FormatException($"{r + 1}行目{c + 1}列目（空行を除く）：数値として不正です。");
+
+                list.Add(new CoordinateData
+                {
+                    C1 = double.Parse(f[0], CultureInfo.InvariantCulture),
+                    C2 = double.Parse(f[1], CultureInfo.InvariantCulture),
+                    C3 = double.Parse(f[2], CultureInfo.InvariantCulture),
+                    C4 = double.Parse(f[3], CultureInfo.InvariantCulture),
+                    C5 = double.Parse(f[4], CultureInfo.InvariantCulture),
+                    C6 = double.Parse(f[5], CultureInfo.InvariantCulture)
+                });
+            }
+            return list;
+        }
+
+        private static readonly Regex NumberPattern = new Regex(@"^-?[0-9]+(\.[0-9]+)?\z");
+
+        private static bool IsNumber(string s)
+        {
+            return NumberPattern.IsMatch(s);
+        }
+
+        private static void ShowError(string message)
+        {
+            MessageBox.Show(message, "読み込みエラー", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        private void OkButton_Click(object sender, RoutedEventArgs e)
+        {
+            int rows = CsvGrid.Items.Count;
+            MessageBox.Show($"{rows}行を取り込みました。", "OK");
+            Close();
+        }
+
+        private void CancelButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_loaded)
+            {
+                MessageBoxResult r = MessageBox.Show("読み込んだデータを破棄して閉じますか？", "確認",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (r != MessageBoxResult.Yes) return;
+            }
+            Close();
+        }
+    }
+}</code></pre>
+</details>
+
+<div class="ex">
+<h3>総合演習</h3>
+<ol>
+<li>次のテストを順に行い、すべて期待どおりか確認する。<br>
+(a) 起動直後：OK無効　(b) <code>ok.csv</code>：表示・OK有効　(c) 続けて <code>ng.csv</code>：エラー、表は(b)のまま　(d) チェックON：表がグレー、OFFで復帰　(e) 7列目以降に文字：読み込める　(f) <code>␣34</code>：<code>34</code>として表示　(g) <code>-5</code>・<code>1.5</code>：読み込める　(h) 空白のみ・全角数字・<code>.5</code>・<code>1e3</code>：エラー　(i) <code>1,"2</code>（引用符が閉じていない）：形式エラー　(j) 行数の多いCSV：表にスクロールバーが出て、OK/Cancelが見える　(k) Excelで開いたままのCSV：エラーメッセージ（落ちない）</li>
+<li>要件変更の練習：「列数を1行目に合わせて可変にする」（ステップ3末尾の「参考」が出発点）「ヘッダ行ありに対応する」。どこを直すか洗い出してから実装する。</li>
+<li>発展（MVVM）：ページ末尾の参考「MVVM版」を読み、自分のコードをMVVMに書き換えてみる。</li>
+</ol>
+</div>
+</section>
+
+<section id="s8">
+<h2>参考：MVVM版</h2>
+<p>ステップ7のコードビハインド版と同じ動作を、MVVM（Model–View–ViewModel）で書き直した例です。<strong>演習ではなく読み物</strong>で、自分のコードと見比べるためのものです。別プロジェクトにコピーして試すのがおすすめです（<code>Microsoft.VisualBasic</code> の参照追加も必要）。</p>
+<h3>考え方</h3>
+<table>
+<tr><th>役割</th><th>担当</th><th>この例では</th></tr>
+<tr><td>View</td><td>見た目。ロジックを持たない</td><td><code>MainWindow.xaml</code>（コードビハインドは <code>DataContext</code> の設定のみ）</td></tr>
+<tr><td>ViewModel</td><td>画面の状態と操作を、プロパティとコマンドで表す</td><td><code>MainViewModel</code></td></tr>
+<tr><td>Model</td><td>データと、UIに触れない処理</td><td><code>CoordinateData</code>、<code>CsvLoader</code></td></tr>
+</table>
+<h3>コードビハインド版との対応</h3>
+<table>
+<tr><th>コードビハインド版</th><th>MVVM版</th></tr>
+<tr><td><code>LoadButton_Click</code> など <code>Click</code> イベント</td><td><code>ICommand</code>（<code>RelayCommand</code>）＋ <code>Command="{Binding LoadCommand}"</code></td></tr>
+<tr><td><code>StatusText.Text = …</code></td><td><code>StatusText</code> プロパティを変えると、<code>PropertyChanged</code> で画面が更新される</td></tr>
+<tr><td><code>CsvGrid.ItemsSource = data</code></td><td><code>Rows</code> プロパティ ＋ <code>ItemsSource="{Binding Rows}"</code></td></tr>
+<tr><td><code>OkButton.IsEnabled = true</code></td><td><code>OkCommand</code> の <code>CanExecute</code>（<code>IsLoaded</code> の値）。ボタンの有効・無効は自動</td></tr>
+<tr><td><code>DataTrigger</code> でグレーアウト</td><td><code>IsGrayed</code> プロパティ（チェックと双方向）と、そこから導く <code>IsGridEnabled</code></td></tr>
+<tr><td><code>MessageBox</code>、<code>OpenFileDialog</code>、<code>Close()</code></td><td><code>IDialogService</code> 経由、および <code>CloseRequested</code> イベント（ViewModelがUIの部品を直接呼ばないため）</td></tr>
+</table>
+<div class="note">ViewModelから <code>MessageBox</code> を直接呼ばないのは、ViewModelを画面なしでテストできるようにするためです（<code>IDialogService</code> の偽物を渡せば、<code>LoadCommand</code> の動作を自動テストできます）。</div>
+<h3>ファイル構成（すべて名前空間は <code>CsvViewer</code>）</h3>
+<p><code>CoordinateData.cs</code> / <code>CsvLoader.cs</code> / <code>DialogService.cs</code> / <code>ViewModelBase.cs</code>（<code>RelayCommand</code> も同居） / <code>MainViewModel.cs</code> / <code>MainWindow.xaml</code> / <code>MainWindow.xaml.cs</code></p>
+<details><summary>CoordinateData.cs（Model）</summary>
+<pre><code>namespace CsvViewer
+{
+    // ViewModelが公開するので public にする（internalだとCS0050）
+    public class CoordinateData
+    {
+        public double C1 { get; set; }
+        public double C2 { get; set; }
+        public double C3 { get; set; }
+        public double C4 { get; set; }
+        public double C5 { get; set; }
+        public double C6 { get; set; }
+    }
+}</code></pre>
+</details><details><summary>CsvLoader.cs（Model）</summary>
+<pre><code>using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
+using Microsoft.VisualBasic.FileIO;
+
+namespace CsvViewer
+{
+    // UIに一切触れない処理（Model）。ステップ7のコードをそのまま移す
+    public static class CsvLoader
+    {
+        private const int ColCount = 6;
+        private static readonly Regex NumberPattern = new Regex(@"^-?[0-9]+(\.[0-9]+)?\z");
+
+        public static List&lt;string[]&gt; ReadCsv(string path)
+        {
+            /* ステップ7の ReadCsv と同じ（TextFieldParser） */
+        }
+
+        public static List&lt;CoordinateData&gt; ConvertAll(List&lt;string[]&gt; rows)
+        {
+            /* ステップ7の ConvertAll と同じ（不正なら FormatException） */
+        }
+
+        private static bool IsNumber(string s) { return NumberPattern.IsMatch(s); }
+    }
+}</code></pre>
+</details><details><summary>DialogService.cs</summary>
+<pre><code>using Microsoft.Win32;
+using System.Windows;
+
+namespace CsvViewer
+{
+    // ViewModelはこのインターフェイスだけを知る。MessageBox等には直接触れない
+    public interface IDialogService
+    {
+        string OpenCsvFile();            // キャンセルなら null
+        void ShowError(string message);
+        void ShowInfo(string message);
+        bool Confirm(string message);    // はい = true
+    }
+
+    public class DialogService : IDialogService
+    {
+        public string OpenCsvFile()
+        {
+            var dlg = new OpenFileDialog { Filter = "CSVファイル|*.csv|テキストファイル|*.txt" };
+            return dlg.ShowDialog() == true ? dlg.FileName : null;
+        }
+
+        public void ShowError(string message)
+        {
+            MessageBox.Show(message, "読み込みエラー", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        public void ShowInfo(string message)
+        {
+            MessageBox.Show(message, "OK");
+        }
+
+        public bool Confirm(string message)
+        {
+            return MessageBox.Show(message, "確認", MessageBoxButton.YesNo,
+                                   MessageBoxImage.Question) == MessageBoxResult.Yes;
+        }
+    }
+}</code></pre>
+</details><details><summary>ViewModelBase.cs（RelayCommand含む）</summary>
+<pre><code>using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Windows.Input;
+
+namespace CsvViewer
+{
+    // 値が変わったことを画面に知らせる仕組み
+    public abstract class ViewModelBase : INotifyPropertyChanged
+    {
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected bool SetProperty&lt;T&gt;(ref T field, T value, [CallerMemberName] string name = null)
+        {
+            if (EqualityComparer&lt;T&gt;.Default.Equals(field, value)) return false;
+            field = value;
+            OnPropertyChanged(name);
+            return true;
+        }
+
+        protected void OnPropertyChanged([CallerMemberName] string name = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+    }
+
+    // ボタンの Click の代わりに、XAMLの Command="{Binding ...}" から呼ばれる
+    public class RelayCommand : ICommand
+    {
+        private readonly Action _execute;
+        private readonly Func&lt;bool&gt; _canExecute;
+
+        public RelayCommand(Action execute, Func&lt;bool&gt; canExecute = null)
+        {
+            _execute = execute;
+            _canExecute = canExecute;
+        }
+
+        public event EventHandler CanExecuteChanged;
+
+        public bool CanExecute(object parameter) { return _canExecute == null || _canExecute(); }
+        public void Execute(object parameter) { _execute(); }
+
+        // 押せるかどうかの条件が変わったら呼ぶ（ボタンの IsEnabled が更新される）
+        public void RaiseCanExecuteChanged()
+        {
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+}</code></pre>
+</details><details open><summary>MainViewModel.cs</summary>
+<pre><code>using System;
+using System.Collections.Generic;
+using System.IO;
+using Microsoft.VisualBasic.FileIO;
+
+namespace CsvViewer
+{
+    public class MainViewModel : ViewModelBase
+    {
+        private readonly IDialogService _dialogs;
+        private string _statusText = "未読み込み";
+        private List&lt;CoordinateData&gt; _rows;
+        private bool _isGrayed;
+        private bool _isLoaded;
+
+        public MainViewModel(IDialogService dialogs)
+        {
+            _dialogs = dialogs;
+            LoadCommand = new RelayCommand(Load);
+            OkCommand = new RelayCommand(Ok, () =&gt; IsLoaded);   // 未読み込みの間は押せない
+            CancelCommand = new RelayCommand(Cancel);
+        }
+
+        public event EventHandler CloseRequested;   // 「閉じたい」とViewに頼む
+
+        public string StatusText
+        {
+            get { return _statusText; }
+            private set { SetProperty(ref _statusText, value); }
+        }
+
+        public List&lt;CoordinateData&gt; Rows
+        {
+            get { return _rows; }
+            private set { SetProperty(ref _rows, value); }
+        }
+
+        public bool IsGrayed
+        {
+            get { return _isGrayed; }
+            set { if (SetProperty(ref _isGrayed, value)) OnPropertyChanged(nameof(IsGridEnabled)); }
+        }
+
+        public bool IsGridEnabled { get { return !IsGrayed; } }
+
+        public bool IsLoaded
+        {
+            get { return _isLoaded; }
+            private set { if (SetProperty(ref _isLoaded, value)) OkCommand.RaiseCanExecuteChanged(); }
+        }
+
+        public RelayCommand LoadCommand { get; }
+        public RelayCommand OkCommand { get; }
+        public RelayCommand CancelCommand { get; }
+
+        private void Load()
+        {
+            string path = _dialogs.OpenCsvFile();
+            if (path == null) return;
+
+            List&lt;string[]&gt; raw;
+            List&lt;CoordinateData&gt; data;
+            try
+            {
+                raw = CsvLoader.ReadCsv(path);
+                data = CsvLoader.ConvertAll(raw);
+            }
+            catch (FormatException ex) { _dialogs.ShowError(ex.Message); return; }
+            catch (MalformedLineException ex)
+            {
+                _dialogs.ShowError($"{ex.LineNumber}行目：CSVの形式が不正です。");
+                return;
+            }
+            catch (IOException ex) { _dialogs.ShowError(ex.Message); return; }
+
+            Rows = data;
+            StatusText = $"{Path.GetFileName(path)}（{raw.Count}行 / 1行目は{raw[0].Length}列）";
+            IsLoaded = true;
+        }
+
+        private void Ok()
+        {
+            _dialogs.ShowInfo($"{Rows.Count}行を取り込みました。");
+            CloseRequested?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void Cancel()
+        {
+            if (IsLoaded &amp;&amp; !_dialogs.Confirm("読み込んだデータを破棄して閉じますか？")) return;
+            CloseRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+}</code></pre>
+</details><details open><summary>MainWindow.xaml</summary>
+<pre><code>&lt;Window x:Class="CsvViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CSVビューア" Height="450" Width="800"&gt;
+    &lt;Grid Margin="10"&gt;
+        &lt;Grid.RowDefinitions&gt;
+            &lt;RowDefinition Height="Auto" /&gt;
+            &lt;RowDefinition Height="Auto" /&gt;
+            &lt;RowDefinition Height="*" /&gt;
+            &lt;RowDefinition Height="Auto" /&gt;
+            &lt;RowDefinition Height="Auto" /&gt;
+        &lt;/Grid.RowDefinitions&gt;
+
+        &lt;TextBlock Text="{Binding StatusText}" Grid.Row="0" HorizontalAlignment="Center" /&gt;
+        &lt;Button Content="ファイル読込" Command="{Binding LoadCommand}" Width="80" Grid.Row="1"
+                HorizontalAlignment="Center" Margin="0,4" /&gt;
+
+        &lt;DataGrid ItemsSource="{Binding Rows}" IsEnabled="{Binding IsGridEnabled}"
+                  Grid.Row="2" IsReadOnly="True" AutoGenerateColumns="False"&gt;
+            &lt;DataGrid.Columns&gt;
+                &lt;DataGridTextColumn Header="X1" Binding="{Binding C1}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="Y1" Binding="{Binding C2}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="Z1" Binding="{Binding C3}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="X2" Binding="{Binding C4}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="Y2" Binding="{Binding C5}" Width="*" /&gt;
+                &lt;DataGridTextColumn Header="Z2" Binding="{Binding C6}" Width="*" /&gt;
+            &lt;/DataGrid.Columns&gt;
+        &lt;/DataGrid&gt;
+
+        &lt;CheckBox Content="グリッドをグレーアウト" IsChecked="{Binding IsGrayed}" Grid.Row="3" Margin="0,6" /&gt;
+
+        &lt;StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right"&gt;
+            &lt;Button Content="OK" Command="{Binding OkCommand}" Width="80" Margin="0,0,8,0" IsDefault="True" /&gt;
+            &lt;Button Content="キャンセル" Command="{Binding CancelCommand}" Width="80" IsCancel="True" /&gt;
+        &lt;/StackPanel&gt;
+    &lt;/Grid&gt;
+&lt;/Window&gt;</code></pre>
+</details><details><summary>MainWindow.xaml.cs</summary>
+<pre><code>using System.Windows;
+
+namespace CsvViewer
+{
+    public partial class MainWindow : Window
+    {
+        public MainWindow()
+        {
+            InitializeComponent();
+            var vm = new MainViewModel(new DialogService());
+            vm.CloseRequested += (s, e) =&gt; Close();
+            DataContext = vm;
+        }
+    }
+}</code></pre>
+</details>
+<div class="ex">
+<h3>読んだあとの課題</h3>
+<ol>
+<li><code>IsGrayed</code> の初期値を <code>true</code> にして、起動直後からチェックが入りグレーアウトされることを確認する。</li>
+<li><code>IsGridEnabled</code> を使わず、<code>IsGrayed</code> を参照する <code>DataTrigger</code>（ステップ5の方法B）でも実現できることを確認する。</li>
+<li><code>IDialogService</code> の偽物 <code>FakeDialogService</code> を書き、<code>OpenCsvFile()</code> がテスト用のパスを返すようにして、<code>MainViewModel</code> を画面なしで動かす流れを考える。</li>
+<li><code>ViewModelBase</code> と <code>RelayCommand</code> は <code>CommunityToolkit.Mvvm</code> のようなライブラリで置き換えられる。何がどれだけ減るか調べる（.NET Frameworkでの利用条件は各自で確認する）。</li>
+</ol>
+</div>
+</section>
+
+</main>
+</body>
+</html>
